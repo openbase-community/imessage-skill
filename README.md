@@ -5,8 +5,8 @@ Local Mac iMessage CLI and agent skill with a WhatsApp-style approval boundary.
 ## Install Skill
 
 ```sh
-npx skills add montaguegabe/imessage --list
-npx skills add montaguegabe/imessage --skill imessage
+npx skills add montaguegabe/imessage-skill --list
+npx skills add montaguegabe/imessage-skill --skill imessage
 ```
 
 The repository contains the `imessage-local` CLI plus the agent skill in
