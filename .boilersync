@@ -1,0 +1,9 @@
+{
+  "template": "openbase-community/templates#skills",
+  "name_snake": "imessage",
+  "name_pretty": "iMessage",
+  "repo_name_kebab": "imessage",
+  "repo_name_pretty": "iMessage Skill",
+  "variables": {},
+  "children": []
+}
