@@ -2,6 +2,16 @@
 
 Local Mac iMessage CLI and agent skill with a WhatsApp-style approval boundary.
 
+## Why a Custom CLI/Skill
+
+iMessage access depends on local macOS databases, Full Disk Access, contacts data, and a careful
+split between metadata and message bodies. A custom CLI gives agents a narrow, reproducible command
+surface instead of direct database access: metadata commands are body-free, message text is only
+available for approved conversations, and send attempts are queued behind approval. The protected
+runtime layout also keeps raw chat databases and snapshots outside normal agent context.
+
+GitHub collaborator: `@natea`.
+
 ## Install Skill
 
 ```sh
