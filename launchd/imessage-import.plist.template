@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{{IMPORT_LABEL}}</string>
+
+    <key>UserName</key>
+    <string>_imessage</string>
+    <key>GroupName</key>
+    <string>imessage-data</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>{{NODE_BIN}}</string>
+        <string>{{REPO_DIR}}/bin/imessage-cli.js</string>
+        <string>import</string>
+        <string>--json</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>{{REPO_DIR}}</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>{{USER_HOME}}</string>
+        <key>IMESSAGE_RUNTIME_HOME</key>
+        <string>{{RUNTIME_DIR}}</string>
+        <key>IMESSAGE_ALLOW_UNPRIVILEGED_ADMIN</key>
+        <string>1</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StartInterval</key>
+    <integer>300</integer>
+
+    <key>Umask</key>
+    <integer>7</integer>
+
+    <key>StandardOutPath</key>
+    <string>{{LOG_DIR}}/import.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>{{LOG_DIR}}/import.err.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>
