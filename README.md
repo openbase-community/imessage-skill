@@ -10,6 +10,40 @@ surface instead of direct database access: metadata commands are body-free, mess
 available for approved conversations, and send attempts are queued behind approval. The protected
 runtime layout also keeps raw chat databases and snapshots outside normal agent context.
 
+## Security model & the lethal trifecta
+
+An agent that can read your iMessages sits squarely inside the
+[**lethal trifecta**](https://simonwillison.net/2025/Jun/16/the-lethal-trifecta/) —
+the combination of capabilities that makes AI agents dangerous:
+
+1. **Access to private data** — your iMessage/SMS history and Contacts.
+2. **Exposure to untrusted content** — inbound messages are attacker-controlled,
+   so any sender can attempt a prompt injection that enters agent context the
+   moment the text is read.
+3. **Ability to exfiltrate** — a `send` channel that could leak what was read.
+
+This skill is designed to break the chain:
+
+- **The read leg is narrowed to approved conversations only.** Raw `chat.db`,
+  Contacts (`AddressBook`) copies, and snapshots live in service/sudo-only
+  `data/protected/` (mode `700`, owned by the `_imessage` service user) outside
+  agent context. Only messages for entities you explicitly `approve` are
+  exposed; everything else is metadata-only. The Full-Disk-Access backup helper
+  is a separate, minimal binary — the agent never touches the live databases.
+- **The exfiltration leg is human-gated and, in v1, not wired to delivery.**
+  `send` requires a stored `send_allowed` flag *and* an explicit Openbase Coder
+  user-approval prompt, and only writes to a local outbox — actual delivery is
+  not implemented, so there is no automated outbound path at all.
+- **Mutating the trust surface requires `sudo`.** `approve`, `revoke`, and
+  `import` change what the agent can see, and are root-gated.
+
+**Operator note:** treat all inbound message text as untrusted input. The
+per-send approval prompt is the primary backstop against injection-driven
+exfiltration — do not set `IMESSAGE_SKIP_OPENBASE_APPROVAL=1` or
+`IMESSAGE_ALLOW_UNPRIVILEGED_ADMIN=1` in any environment an agent's own context
+can influence (the import LaunchDaemon sets the latter deliberately in its own
+isolated, non-agent context).
+
 ## Install Skill
 
 ```sh
