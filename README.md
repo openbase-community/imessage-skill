@@ -47,8 +47,8 @@ isolated, non-agent context).
 ## Install Skill
 
 ```sh
-npx skills add montaguegabe/imessage-skill --list
-npx skills add montaguegabe/imessage-skill --skill imessage
+npx skills add openbase-community/imessage-skill --list
+npx skills add openbase-community/imessage-skill --skill imessage
 ```
 
 The repository contains the `imessage-local` CLI plus the agent skill in
