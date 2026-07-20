@@ -25,10 +25,15 @@ Contacts databases directly for ordinary answers.
   from approved CLI results.
 - Do not approve, revoke, import, or change launchd/Full Disk Access unless the
   user explicitly asks.
-- `approve`, `revoke`, and `import` require sudo and do not also require
-  Openbase Coder approval.
+- `approve` and `revoke` must use an exact contact or conversation ID and either
+  `--approval-mode openbase` or `--approval-mode sudo`. Openbase mode asks
+  Openbase Coder for metadata-only user approval and does not require sudo.
+  Sudo mode uses the stronger local Unix-permissions path.
+- `import` still requires sudo because it handles protected raw database
+  snapshots.
 - `send` does not require sudo, but it must pass both the stored `send_allowed`
-  gate and Openbase Coder approval before queueing.
+  gate and exact-entity Openbase Coder approval before queueing. Approval
+  prompts must not include message bodies.
 
 ## CLI Location
 
@@ -65,8 +70,16 @@ imessage-local recent CONTACT_OR_CHAT_ID --limit 10 --json
 Approve only when the user explicitly asks:
 
 ```sh
-sudo imessage-local approve CONTACT_OR_CHAT_ID --name "Name" --json
-sudo imessage-local approve CONTACT_OR_CHAT_ID --name "Name" --send --json
+imessage-local approve CONTACT_OR_CHAT_ID --approval-mode openbase --name "Name" --json
+imessage-local approve CONTACT_OR_CHAT_ID --approval-mode openbase --name "Name" --send --json
+sudo imessage-local approve CONTACT_OR_CHAT_ID --approval-mode sudo --name "Name" --json
+```
+
+Revoke only when the user explicitly asks:
+
+```sh
+imessage-local revoke CONTACT_OR_CHAT_ID --approval-mode openbase --json
+sudo imessage-local revoke CONTACT_OR_CHAT_ID --approval-mode sudo --json
 ```
 
 Queue a send only when the user explicitly asks:

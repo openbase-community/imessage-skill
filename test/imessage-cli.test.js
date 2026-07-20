@@ -59,23 +59,65 @@ test('approved group imports by chat guid', () => {
   })
 })
 
-test('approve requires sudo-equivalent privilege and does not request Openbase approval', () => {
+test('approve supports Openbase approval mode without sudo', () => {
   withFixture(({ root }) => {
     const approvalBin = join(root, 'openbase-coder')
-    writeFileSync(approvalBin, '#!/bin/sh\nexit 42\n')
+    const approvalArgsPath = join(root, 'approval-args.txt')
+    writeFileSync(approvalBin, `#!/bin/sh\nprintf '%s\\n' "$@" > "${approvalArgsPath}"\n`)
     chmodSync(approvalBin, 0o755)
-    assert.throws(
-      () => runCli(root, ['approve', '+15551234567', '--json'], { PATH: `${root}:${process.env.PATH}` }),
-      /requires sudo/,
-    )
 
     const result = JSON.parse(runCli(
       root,
-      ['approve', '+15551234567', '--name', 'Synthetic Person', '--send', '--json'],
-      { PATH: `${root}:${process.env.PATH}`, IMESSAGE_ALLOW_UNPRIVILEGED_ADMIN: '1' },
+      ['approve', '+15551234567', '--approval-mode', 'openbase', '--name', 'Synthetic Person', '--send', '--json'],
+      {
+        PATH: `${root}:${process.env.PATH}`,
+        OPENBASE_CODER_APPROVAL_TIMEOUT_SECONDS: '5',
+      },
     ))
     assert.equal(result.entity.approved, 1)
     assert.equal(result.entity.send_allowed, 1)
+    assert.equal(result.audit.action, 'approve-imessage-entity')
+    assert.equal(result.audit.entity_id, '+15551234567')
+    assert.equal(result.audit.approval_mode, 'openbase')
+    const approvalArgs = readFileSync(approvalArgsPath, 'utf8').trim().split('\n')
+    assert.ok(approvalArgs.includes('approve-imessage-entity'))
+    assert.ok(approvalArgs.includes('entity_id=+15551234567'))
+  })
+})
+
+test('sudo approval mode still requires sudo-equivalent privilege', () => {
+  withFixture(({ root }) => {
+    assert.throws(
+      () => runCli(root, ['approve', '+15551234567', '--approval-mode', 'sudo', '--json']),
+      /requires sudo/,
+    )
+  })
+})
+
+test('revoke uses Openbase approval mode and writes an audit row', () => {
+  withFixture(({ root }) => {
+    const entityId = '+15551234567'
+    const db = openApprovedDb({ root })
+    approveEntity(db, entityId, { displayName: 'Synthetic Person', readAllowed: true, sendAllowed: true, root })
+    db.close()
+
+    const approvalBin = join(root, 'openbase-coder')
+    const approvalArgsPath = join(root, 'approval-args.txt')
+    writeFileSync(approvalBin, `#!/bin/sh\nprintf '%s\\n' "$@" > "${approvalArgsPath}"\n`)
+    chmodSync(approvalBin, 0o755)
+
+    const result = JSON.parse(runCli(root, ['revoke', entityId, '--approval-mode', 'openbase', '--json'], {
+      PATH: `${root}:${process.env.PATH}`,
+      OPENBASE_CODER_APPROVAL_TIMEOUT_SECONDS: '5',
+    }))
+
+    assert.equal(result.entity.approved, 0)
+    assert.equal(result.audit.action, 'revoke-imessage-entity')
+    assert.equal(result.audit.entity_id, entityId)
+    assert.equal(result.audit.approval_mode, 'openbase')
+    const approvalArgs = readFileSync(approvalArgsPath, 'utf8').trim().split('\n')
+    assert.ok(approvalArgs.includes('revoke-imessage-entity'))
+    assert.ok(approvalArgs.includes(`entity_id=${entityId}`))
   })
 })
 
@@ -100,12 +142,27 @@ test('send requires send approval and Openbase Coder approval before queueing', 
 
     const approvalArgs = readFileSync(approvalArgsPath, 'utf8').trim().split('\n')
     assert.deepEqual(approvalArgs.slice(0, 5), ['user', 'approval', 'request', '--skill', 'imessage'])
-    assert.ok(approvalArgs.includes('send-message'))
+    assert.ok(approvalArgs.includes('send-imessage-message'))
+    assert.ok(approvalArgs.includes(`entity_id=${entityId}`))
+    assert.ok(approvalArgs.includes('message_length=11'))
+    assert.equal(approvalArgs.includes('message_preview=hello there'), false)
+    assert.equal(approvalArgs.join('\n').includes('hello there'), false)
+    assert.equal(result.audit.action, 'send-imessage-message')
+    assert.equal(result.audit.approval_mode, 'openbase')
 
     const outbox = openOutboxDb({ root, readOnly: true })
     const queued = outbox.prepare('SELECT COUNT(*) as n FROM outbound_messages').get()
     outbox.close()
     assert.equal(queued.n, 1)
+  })
+})
+
+test('CLI rejects wildcard approval targets', () => {
+  withFixture(({ root }) => {
+    assert.throws(
+      () => runCli(root, ['approve', 'all', '--json'], { IMESSAGE_SKIP_OPENBASE_APPROVAL: '1' }),
+      /wildcard approvals are not allowed/,
+    )
   })
 })
 

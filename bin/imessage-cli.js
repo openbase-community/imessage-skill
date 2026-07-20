@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process'
 import {
+  appendApprovalAudit,
   approveEntity,
   createOutboundMessage,
   listApprovedEntities,
@@ -50,45 +51,115 @@ async function main(argv = process.argv.slice(2)) {
         }, options)
       case 'approve':
         requireArgs(command, args, 1)
-        requirePrivileged(command)
-        approvedDb = openApprovedDb({ root })
-        return output({
-          entity: approveEntity(approvedDb, args[0], {
+        {
+          const entityId = requireExactEntityId(command, args[0])
+          const approvalMode = approvalModeFromOptions(options)
+          if (approvalMode === 'sudo') {
+            requirePrivileged(command)
+          } else {
+            requestOpenbaseApproval({
+              action: 'approve-imessage-entity',
+              description: `Approve iMessage contact or conversation ${entityId}`,
+              command: formatApprovalCommand(command, [entityId]),
+              details: {
+                entity_id: entityId,
+                approval_mode: approvalMode,
+                entity_kind: options.kind ?? inferKind(entityId),
+                read_allowed: !options['no-read'],
+                send_allowed: Boolean(options.send),
+                display_name_present: Boolean(options.name),
+              },
+            })
+          }
+          approvedDb = openApprovedDb({ root })
+          const entity = approveEntity(approvedDb, entityId, {
             displayName: options.name ?? null,
             readAllowed: !options['no-read'],
             sendAllowed: Boolean(options.send),
-            kind: options.kind ?? inferKind(args[0]),
+            kind: options.kind ?? inferKind(entityId),
             root,
-          }),
-        }, options)
+          })
+          const audit = appendApprovalAudit(approvedDb, {
+            action: 'approve-imessage-entity',
+            entityId,
+            approvalMode,
+            metadata: {
+              entity_kind: entity.kind,
+              read_allowed: Boolean(entity.read_allowed),
+              send_allowed: Boolean(entity.send_allowed),
+            },
+          })
+          return output({ entity, audit }, options)
+        }
       case 'revoke':
         requireArgs(command, args, 1)
-        requirePrivileged(command)
-        approvedDb = openApprovedDb({ root })
-        return output({ entity: revokeEntity(approvedDb, args[0], { root }) }, options)
+        {
+          const entityId = requireExactEntityId(command, args[0])
+          const approvalMode = approvalModeFromOptions(options)
+          if (approvalMode === 'sudo') {
+            requirePrivileged(command)
+          } else {
+            requestOpenbaseApproval({
+              action: 'revoke-imessage-entity',
+              description: `Revoke iMessage contact or conversation ${entityId}`,
+              command: formatApprovalCommand(command, [entityId]),
+              details: {
+                entity_id: entityId,
+                approval_mode: approvalMode,
+              },
+            })
+          }
+          approvedDb = openApprovedDb({ root })
+          const entity = revokeEntity(approvedDb, entityId, { root })
+          const audit = appendApprovalAudit(approvedDb, {
+            action: 'revoke-imessage-entity',
+            entityId,
+            approvalMode,
+            metadata: {
+              approved_after: Boolean(entity?.approved),
+            },
+          })
+          return output({ entity, audit }, options)
+        }
       case 'send':
         requireArgs(command, args, 2)
-        requestOpenbaseApproval({
-          action: 'send-message',
-          description: `Queue an iMessage to ${args[0]}`,
-          command: formatCommand(command, args),
-          details: {
-            entity_id: args[0],
-            message_preview: args.slice(1).join(' ').slice(0, 160),
-          },
-        })
-        approvedDb = openApprovedDb({ root, readOnly: true })
-        outboxDb = openOutboxDb({ root })
-        return output({
-          queued: createOutboundMessage({
+        {
+          const entityId = requireExactEntityId(command, args[0])
+          const messageText = args.slice(1).join(' ')
+          requestOpenbaseApproval({
+            action: 'send-imessage-message',
+            description: `Queue an iMessage to ${entityId}`,
+            command: formatApprovalCommand(command, [entityId, '[message text redacted]']),
+            details: {
+              entity_id: entityId,
+              approval_mode: 'openbase',
+              message_length: messageText.length,
+            },
+          })
+          approvedDb = openApprovedDb({ root })
+          outboxDb = openOutboxDb({ root })
+          const queued = createOutboundMessage({
             approvedDb,
             outboxDb,
-            entityId: args[0],
-            text: args.slice(1).join(' '),
+            entityId,
+            text: messageText,
             root,
-          }),
-          note: 'Queued locally. Delivery is not implemented in v1.',
-        }, options)
+          })
+          const audit = appendApprovalAudit(approvedDb, {
+            action: 'send-imessage-message',
+            entityId,
+            approvalMode: 'openbase',
+            metadata: {
+              outbox_id: queued.id,
+              message_length: messageText.length,
+            },
+          })
+          return output({
+            queued,
+            audit,
+            note: 'Queued locally. Delivery is not implemented in v1.',
+          }, options)
+        }
       case 'queued':
         outboxDb = openOutboxDb({ root, readOnly: true })
         return output(listQueuedOutboundMessages(outboxDb, { limit: intOption(options.limit, 10) }), options)
@@ -153,8 +224,29 @@ function requireArgs(command, args, count) {
 
 function requirePrivileged(command) {
   if (process.env.IMESSAGE_ALLOW_UNPRIVILEGED_ADMIN === '1') return
-  if (typeof process.getuid === 'function' && process.getuid() === 0) return
+  if (isRootUser()) return
   throw new Error(`${command} requires sudo because it changes the approved iMessage surface`)
+}
+
+function approvalModeFromOptions(options) {
+  const mode = options['approval-mode'] ?? (isRootUser() ? 'sudo' : 'openbase')
+  if (!['openbase', 'sudo'].includes(mode)) {
+    throw new Error('--approval-mode must be "openbase" or "sudo"')
+  }
+  return mode
+}
+
+function isRootUser() {
+  return typeof process.getuid === 'function' && process.getuid() === 0
+}
+
+function requireExactEntityId(command, id) {
+  const value = String(id ?? '').trim()
+  const normalized = value.toLowerCase().replace(/[\s_-]+/g, '-')
+  if (!value || value === '*' || ['all', 'any', 'everyone', 'all-contacts', 'all-chats'].includes(normalized)) {
+    throw new Error(`${command} requires one exact contact or conversation id; wildcard approvals are not allowed`)
+  }
+  return value
 }
 
 function requestOpenbaseApproval({ action, description, command, details }) {
@@ -188,8 +280,14 @@ function requestOpenbaseApproval({ action, description, command, details }) {
   if (result.status !== 0) throw new Error((result.stderr || result.stdout || '').trim() || 'Openbase Coder approval was not accepted.')
 }
 
-function formatCommand(command, args) {
-  return ['imessage-local', command, ...args].join(' ')
+function formatApprovalCommand(command, args) {
+  return ['imessage-local', command, ...args.map(formatCommandArg)].join(' ')
+}
+
+function formatCommandArg(value) {
+  const raw = String(value)
+  if (/^[A-Za-z0-9_@.+:/=-]+$/.test(raw)) return raw
+  return JSON.stringify(raw)
 }
 
 function intOption(value, fallback) {
@@ -234,11 +332,15 @@ Commands:
   activity [--limit N] [--since today|YYYY-MM-DD|ISO] [--json]
   approved [--json]
   recent CONTACT_OR_CHAT_ID [--limit N] [--before TIMESTAMP_MS] [--json]
-  approve CONTACT_OR_CHAT_ID [--name NAME] [--send] [--no-read] [--kind handle|chat] [--json]
-  revoke CONTACT_OR_CHAT_ID [--json]
+  approve CONTACT_OR_CHAT_ID [--approval-mode openbase|sudo] [--name NAME] [--send] [--no-read] [--kind handle|chat] [--json]
+  revoke CONTACT_OR_CHAT_ID [--approval-mode openbase|sudo] [--json]
   send CONTACT_OR_CHAT_ID TEXT [--json]
   queued [--limit N] [--json]
   import [--source DIR] [--json]
+
+Options:
+  --approval-mode openbase|sudo
+                  openbase asks Openbase Coder; sudo uses the strong local-permissions path.
 `)
 }
 

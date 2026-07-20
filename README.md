@@ -42,9 +42,11 @@ Runtime data lives outside the source tree:
   logs/
 ```
 
-`data/catalog` and `data/approved` are group-readable through `imessage-data`.
-`data/protected` is service/sudo-only. `data/outbox`, `inbox`, and `logs` are
-group-writable so the user-session helper and non-sudo send queue can work.
+`data/catalog` and `data/approved` are group-readable through `imessage-data`
+in the strong local-permissions setup. Openbase approvals mode can also operate
+on user-owned approved storage for a lower-friction setup. `data/protected` is
+service/sudo-only. `data/outbox`, `inbox`, and `logs` are group-writable so the
+user-session helper and non-sudo send queue can work.
 
 ## CLI
 
@@ -63,8 +65,8 @@ imessage-local search QUERY [--limit N] [--json]
 imessage-local activity [--limit N] [--since today|YYYY-MM-DD|ISO] [--json]
 imessage-local approved [--json]
 imessage-local recent CONTACT_OR_CHAT_ID [--limit N] [--before TIMESTAMP_MS] [--json]
-sudo imessage-local approve CONTACT_OR_CHAT_ID [--name NAME] [--send] [--no-read] [--kind handle|chat] [--json]
-sudo imessage-local revoke CONTACT_OR_CHAT_ID [--json]
+imessage-local approve CONTACT_OR_CHAT_ID [--approval-mode openbase|sudo] [--name NAME] [--send] [--no-read] [--kind handle|chat] [--json]
+imessage-local revoke CONTACT_OR_CHAT_ID [--approval-mode openbase|sudo] [--json]
 imessage-local send CONTACT_OR_CHAT_ID TEXT [--json]
 imessage-local queued [--limit N] [--json]
 sudo imessage-local import [--source DIR] [--json]
@@ -73,9 +75,19 @@ sudo imessage-local import [--source DIR] [--json]
 Metadata commands do not return message bodies. `recent` only returns message
 text for approved people or group conversations.
 
+`approve` and `revoke` support two explicit modes. `--approval-mode openbase`
+asks Openbase Coder for an exact-contact or exact-conversation metadata-only
+approval and does not require sudo. This is the lower-friction setup path for
+users less sensitive about local messaging-data permissions. `--approval-mode
+sudo` keeps the strongest local Unix-permissions path. `import` still requires
+sudo because it moves protected raw database snapshots.
+
 `send` does not require sudo. It checks `send_allowed`, asks Openbase Coder for
-approval, and queues locally in `data/outbox/outbox.sqlite`. Delivery is not
-implemented in v1.
+exact-entity approval, and queues locally in `data/outbox/outbox.sqlite`.
+Approval prompts include metadata such as entity ID and message length, not
+message bodies. Add, revoke, and send operations append metadata-only rows to
+`approval_audit` in the approved SQLite store. Delivery is not implemented in
+v1.
 
 ## Backup Helper
 
