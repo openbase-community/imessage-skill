@@ -33,9 +33,9 @@ function run() {
     if (payload.mode === 'send') app.send(payload.text, { to: recipient })
     else if (payload.mode !== 'check') return JSON.stringify({ ok: false, error: 'invalid-mode' })
     return JSON.stringify({ ok: true, status: payload.mode === 'send' ? 'submitted' : 'ready' })
-  } catch (_) {
+  } catch (error) {
     // Never print native errors: they can include the outbound message text.
-    return JSON.stringify({ ok: false, error: 'automation' })
+    return JSON.stringify({ ok: false, error: 'automation', code: Number(error.errorNumber) || null })
   }
 }
 
