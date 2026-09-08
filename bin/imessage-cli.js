@@ -2,7 +2,6 @@
 import { spawnSync } from 'node:child_process'
 import {
   approveEntity,
-  createOutboundMessage,
   listApprovedEntities,
   listCatalogActivity,
   listCatalogEntities,
@@ -15,6 +14,7 @@ import {
 } from '../lib/imessage-db.js'
 import { importFromBackups } from '../lib/imessage-import.js'
 import { ensureRuntimeLayout, runtimeRootFromOptions } from '../lib/imessage-paths.js'
+import { deliverMessage, messagesTransport, outboundStatus, sendMessage, sendTarget } from '../lib/imessage-delivery.js'
 
 async function main(argv = process.argv.slice(2)) {
   const { command, args, options } = parseArgs(argv)
@@ -68,27 +68,34 @@ async function main(argv = process.argv.slice(2)) {
         return output({ entity: revokeEntity(approvedDb, args[0], { root }) }, options)
       case 'send':
         requireArgs(command, args, 2)
-        requestOpenbaseApproval({
-          action: 'send-message',
-          description: `Queue an iMessage to ${args[0]}`,
-          command: formatCommand(command, args),
-          details: {
-            entity_id: args[0],
-            message_preview: args.slice(1).join(' ').slice(0, 160),
-          },
-        })
         approvedDb = openApprovedDb({ root, readOnly: true })
         outboxDb = openOutboxDb({ root })
         return output({
-          queued: createOutboundMessage({
-            approvedDb,
-            outboxDb,
-            entityId: args[0],
-            text: args.slice(1).join(' '),
-            root,
+          message: sendMessage({
+            approvedDb, outboxDb, entityId: args[0], text: args.slice(1).join(' '),
+            approve: approveSend, queueOnly: Boolean(options['queue-only']),
           }),
-          note: 'Queued locally. Delivery is not implemented in v1.',
+          note: options['queue-only'] ? 'Queued only; delivery requires an explicit deliver command.' : 'Submitted to Messages.app; recipient delivery is not confirmed.',
         }, options)
+      case 'delivery-check':
+        requireArgs(command, args, 1)
+        approvedDb = openApprovedDb({ root, readOnly: true })
+        return output(messagesTransport({ mode: 'check', target: sendTarget(approvedDb, args[0]) }), options)
+      case 'deliver':
+        requireArgs(command, args, 1)
+        approvedDb = openApprovedDb({ root, readOnly: true })
+        outboxDb = openOutboxDb({ root })
+        {
+          const message = outboundStatus(outboxDb, args[0])
+          if (message.status !== 'queued') throw new Error(`message is ${message.status}; refusing a possible duplicate send`)
+          sendTarget(approvedDb, message.entity_id)
+          approveSend({ entityId: message.entity_id, outboxId: message.id })
+          return output({ message: deliverMessage({ approvedDb, outboxDb, id: message.id }), note: 'Submitted to Messages.app; recipient delivery is not confirmed.' }, options)
+        }
+      case 'send-status':
+        requireArgs(command, args, 1)
+        outboxDb = openOutboxDb({ root, readOnly: true })
+        return output(outboundStatus(outboxDb, args[0]), options)
       case 'queued':
         outboxDb = openOutboxDb({ root, readOnly: true })
         return output(listQueuedOutboundMessages(outboxDb, { limit: intOption(options.limit, 10) }), options)
@@ -117,7 +124,7 @@ function parseArgs(argv) {
     if (value.startsWith('--')) {
       const [rawName, inlineValue] = value.slice(2).split('=', 2)
       const name = rawName.trim()
-      if (['json', 'help', 'send', 'no-read'].includes(name)) options[name] = true
+      if (['json', 'help', 'send', 'no-read', 'queue-only'].includes(name)) options[name] = true
       else if (inlineValue !== undefined) options[name] = inlineValue
       else {
         i += 1
@@ -158,7 +165,6 @@ function requirePrivileged(command) {
 }
 
 function requestOpenbaseApproval({ action, description, command, details }) {
-  if (process.env.IMESSAGE_SKIP_OPENBASE_APPROVAL === '1') return
   const approvalCommand = process.env.OPENBASE_CODER_APPROVAL_COMMAND ?? 'openbase-coder'
   const timeoutSeconds = process.env.OPENBASE_CODER_APPROVAL_TIMEOUT_SECONDS ?? '300'
   const approvalArgs = [
@@ -188,8 +194,16 @@ function requestOpenbaseApproval({ action, description, command, details }) {
   if (result.status !== 0) throw new Error((result.stderr || result.stdout || '').trim() || 'Openbase Coder approval was not accepted.')
 }
 
-function formatCommand(command, args) {
-  return ['imessage-local', command, ...args].join(' ')
+function approveSend({ entityId, messageLength, outboxId }) {
+  requestOpenbaseApproval({
+    action: 'send-message',
+    description: `Send a Messages.app message to ${entityId}`,
+    details: {
+      entity_id: entityId,
+      ...(messageLength !== undefined ? { message_length: messageLength } : {}),
+      ...(outboxId ? { outbox_id: outboxId } : {}),
+    },
+  })
 }
 
 function intOption(value, fallback) {
@@ -236,7 +250,10 @@ Commands:
   recent CONTACT_OR_CHAT_ID [--limit N] [--before TIMESTAMP_MS] [--json]
   approve CONTACT_OR_CHAT_ID [--name NAME] [--send] [--no-read] [--kind handle|chat] [--json]
   revoke CONTACT_OR_CHAT_ID [--json]
-  send CONTACT_OR_CHAT_ID TEXT [--json]
+  send CONTACT_OR_CHAT_ID TEXT [--queue-only] [--json]
+  delivery-check CONTACT_OR_CHAT_ID [--json]
+  deliver OUTBOX_ID [--json]
+  send-status OUTBOX_ID [--json]
   queued [--limit N] [--json]
   import [--source DIR] [--json]
 `)

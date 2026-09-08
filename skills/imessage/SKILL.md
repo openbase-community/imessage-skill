@@ -27,8 +27,8 @@ Contacts databases directly for ordinary answers.
   user explicitly asks.
 - `approve`, `revoke`, and `import` require sudo and do not also require
   Openbase Coder approval.
-- `send` does not require sudo, but it must pass both the stored `send_allowed`
-  gate and Openbase Coder approval before queueing.
+- `send` and `deliver` do not require sudo, but must pass the stored `send_allowed` gate and exact-entity Openbase Coder approval. Approval prompts contain metadata only, never message bodies. A declined or timed-out approval is a hard stop.
+- Delivery uses Messages.app in the logged-in macOS user's session. Do not work around macOS Automation permissions. Never automatically drain old queued messages or retry a `submitting`, `submitted`, or `unknown` message.
 
 ## CLI Location
 
@@ -69,11 +69,20 @@ sudo imessage-local approve CONTACT_OR_CHAT_ID --name "Name" --json
 sudo imessage-local approve CONTACT_OR_CHAT_ID --name "Name" --send --json
 ```
 
-Queue a send only when the user explicitly asks:
+Send only when the user explicitly asks:
 
 ```sh
 imessage-local send CONTACT_OR_CHAT_ID "message text" --json
 ```
+
+Check readiness without sending, or inspect the metadata of one outbound message:
+
+```sh
+imessage-local delivery-check CONTACT_OR_CHAT_ID --json
+imessage-local send-status OUTBOX_ID --json
+```
+
+For explicit queueing, add `--queue-only` to `send`. Later, `imessage-local deliver OUTBOX_ID --json` requests fresh approval and submits that exact queued message. `submitted` means accepted by Messages.app, not confirmed recipient delivery. If submission is `unknown` or interrupted in `submitting`, ask the user to verify in Messages before creating another send; never retry automatically.
 
 ## Output Discipline
 

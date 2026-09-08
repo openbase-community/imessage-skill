@@ -91,16 +91,19 @@ test('send requires send approval and Openbase Coder approval before queueing', 
     writeFileSync(approvalBin, `#!/bin/sh\nprintf '%s\\n' "$@" > "${approvalArgsPath}"\n`)
     chmodSync(approvalBin, 0o755)
 
-    const result = JSON.parse(runCli(root, ['send', entityId, 'hello', 'there', '--json'], {
+    const result = JSON.parse(runCli(root, ['send', entityId, 'hello', 'there', '--queue-only', '--json'], {
       PATH: `${root}:${process.env.PATH}`,
       OPENBASE_CODER_APPROVAL_TIMEOUT_SECONDS: '5',
     }))
-    assert.equal(result.queued.entity_id, entityId)
-    assert.equal(result.queued.text, 'hello there')
+    assert.equal(result.message.entity_id, entityId)
+    assert.equal(result.message.status, 'queued')
+    assert.equal(result.message.text, undefined)
 
     const approvalArgs = readFileSync(approvalArgsPath, 'utf8').trim().split('\n')
     assert.deepEqual(approvalArgs.slice(0, 5), ['user', 'approval', 'request', '--skill', 'imessage'])
     assert.ok(approvalArgs.includes('send-message'))
+    assert.ok(approvalArgs.includes(`entity_id=${entityId}`))
+    assert.equal(approvalArgs.join('\n').includes('hello there'), false)
 
     const outbox = openOutboxDb({ root, readOnly: true })
     const queued = outbox.prepare('SELECT COUNT(*) as n FROM outbound_messages').get()
